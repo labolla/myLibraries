@@ -1,0 +1,3 @@
+SoftPressSensor	KEYWORD1
+read	KEYWORD2
+getRange	KEYWORD2
