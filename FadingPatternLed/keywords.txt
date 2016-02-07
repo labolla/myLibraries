@@ -1,0 +1,3 @@
+FadingPatternLed	KEYWORD1
+updatePattern	KEYWORD2
+UpdateDisplay	KEYWORD2
