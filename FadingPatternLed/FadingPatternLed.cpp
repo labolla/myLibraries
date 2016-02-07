@@ -27,11 +27,11 @@
 #define LED_ON_FAST_TIME   100
 #define FADE_OUT_FAST_TIME 100
 #define LED_OFF_FAST_TIME  200
-#define FAST_BRIGHT 255
+#define FAST_BRIGHT 0  // zero is full brightness
 
 // milli-seconds needed to ramp up/down
 // from idle state to excited/fast one and vice-versa
-#define UP_TIME 2000
+#define UP_TIME 8000
 #define DOWN_TIME 15000
 
 bool quickrampOption = false;
@@ -53,13 +53,13 @@ FadingPatternLed::FadingPatternLed(int pin, long fadeIn, long on, long fadeOut, 
   _ledState = LED_OFF;
   // init randomly the curr off time
   //_prevTime = random((pin-RED_LED)*fadeInTime/3, (pin+1-RED_LED)*fadeInTime/3);
-  _prevTime = random(0, _fadeInTime);
+  _prevTime = millis();
 
   exciting = false;
 
   // init step to update brightness and duration for exiciting and relaxig
-  _bright_up_step= ceil((FAST_BRIGHT-_idle_bright)*SAMPLING_TIME/UP_TIME);
-  _bright_dw_step= ceil((FAST_BRIGHT-_idle_bright)*SAMPLING_TIME/DOWN_TIME);
+  _bright_up_step= ceil((_idle_bright - FAST_BRIGHT)*SAMPLING_TIME/UP_TIME);
+  _bright_dw_step= ceil((_idle_bright - FAST_BRIGHT)*SAMPLING_TIME/DOWN_TIME);
 
   _blink_up_on_step  = max(1,((long)(_led_on_time_idle  - LED_ON_FAST_TIME))*SAMPLING_TIME/UP_TIME);
   _blink_up_off_step = max(1,((long)(_led_off_time_idle - LED_OFF_FAST_TIME))*SAMPLING_TIME/UP_TIME);
@@ -70,32 +70,6 @@ FadingPatternLed::FadingPatternLed(int pin, long fadeIn, long on, long fadeOut, 
   _blink_dw_off_step = max(1,((long)(_led_off_time_idle - LED_OFF_FAST_TIME))*SAMPLING_TIME/DOWN_TIME);
   _blink_dw_in_step  = max(1,((long)(_fade_in_time_idle - FADE_IN_FAST_TIME))*SAMPLING_TIME/DOWN_TIME);
   _blink_dw_out_step = max(1,((long)(_fade_out_time_idle- FADE_OUT_FAST_TIME))*SAMPLING_TIME/DOWN_TIME);
-
-#ifdef _DEBUG_FADING_PATTERN_LED
-  Serial.begin(9600);
-  while (!Serial);
-  Serial.print("Led initValue for pin ");
-  Serial.println(_ledPin);
-  Serial.print(_bright_up_step);
-  Serial.print('\t');
-  Serial.println(_bright_dw_step);
-
-  Serial.print(_blink_dw_on_step);
-  Serial.print('\t');
-  Serial.print(_blink_dw_off_step);
-  Serial.print('\t');
-  Serial.print(_blink_dw_in_step);
-  Serial.print('\t');
-  Serial.println(_blink_dw_out_step);
-
-  Serial.print(_blink_up_on_step);
-  Serial.print('\t');
-  Serial.print(_blink_up_off_step);
-  Serial.print('\t');
-  Serial.print(_blink_up_in_step);
-  Serial.print('\t');
-  Serial.println(_blink_up_out_step);
-#endif // _DEBUG_FADING_PATTERN_LED
 }
 
 // update dynamically current pattern settings based on input "excited" or not
@@ -104,7 +78,7 @@ void FadingPatternLed::updatePattern()
   if (exciting)
   {
     //increment max bright to blink (with saturation)
-    _maxBright = (((long)_maxBright + _bright_up_step) > FAST_BRIGHT ? FAST_BRIGHT : _maxBright + _bright_up_step);
+    _maxBright = (((signed long)_maxBright - _bright_up_step) < FAST_BRIGHT ? FAST_BRIGHT : _maxBright - _bright_up_step);
 
     // decrease duration of each blinking state to speed up flashing;
     _OnTime = _OnTime - _blink_up_on_step;
@@ -119,7 +93,7 @@ void FadingPatternLed::updatePattern()
   else
   {
     //decrement max bright, not less then IDLE_BRIGHT
-   _maxBright = (((long)_maxBright - _bright_dw_step) > _idle_bright ? _maxBright - _bright_dw_step : _idle_bright);
+    _maxBright = (((long)_maxBright + _bright_dw_step) < _idle_bright ? _maxBright + _bright_dw_step : _idle_bright);
 
     // increase duration of each blinking state to move back to idle flashing
     _OnTime = _OnTime + _blink_dw_on_step;
@@ -151,10 +125,20 @@ void FadingPatternLed::UpdateDisplay (unsigned long currTime)
   else
   {
     // check state machine, update status and prevTime, compute fade value if needed and update pin
-    if ((_ledState==LED_OFF) && ((signed long) (currTime-_prevTime) >= _OffTime))
+    if (_ledState==LED_OFF)
     {//OFF->FADE_IN
-      _ledState = LED_FADE_IN;
-      _prevTime = currTime;
+      if((signed long) (currTime-_prevTime) >= _OffTime)
+      {
+        _ledState = LED_FADE_IN;
+        _prevTime = currTime;
+#ifdef _DEBUG_FADING_PATTERN_LED_
+        Serial.println("OFF -> FADE_IN");
+#endif // _DEBUG_FADING_PATTERN_LED
+      }
+      else
+      {
+        analogWrite(_ledPin,255);
+      }
     }
     else if (_ledState==LED_FADE_IN)
     {
@@ -163,13 +147,26 @@ void FadingPatternLed::UpdateDisplay (unsigned long currTime)
         _ledState = LED_ON;
         _prevTime = currTime;
         analogWrite(_ledPin,_maxBright);
+#ifdef _DEBUG_FADING_PATTERN_LED_
+      Serial.println("FADE_IN -> ON");
+#endif // _DEBUG_FADING_PATTERN_LED
       }
       else
       {//just update fade value
-        int fadeValue = (currTime-_prevTime)*_maxBright/_fadeInTime;
+        signed int fadeValue = 255 -((255-_maxBright)*(currTime-_prevTime)/_fadeInTime);
         // if fadeTime has changed we may have been gone above maxBright
-        fadeValue = min(fadeValue, _maxBright);
+        fadeValue = max(fadeValue, _maxBright);
         analogWrite(_ledPin,fadeValue);
+#ifdef _DEBUG_FADING_PATTERN_LED_
+      {
+        static int cnt = 0;
+        cnt++;
+        if (!(cnt%300))
+        {
+          Serial.println(fadeValue);
+        }
+      }
+#endif // _DEBUG_FADING_PATTERN_LED
       }
     }
     else if ((_ledState==LED_ON)&&(currTime-_prevTime >= _OnTime))
@@ -178,6 +175,9 @@ void FadingPatternLed::UpdateDisplay (unsigned long currTime)
       _prevTime=currTime;
       int fadeValue = _maxBright;
       analogWrite(_ledPin,fadeValue);
+#ifdef _DEBUG_FADING_PATTERN_LED_
+      Serial.println("ON -> FADE_OUT");
+#endif // _DEBUG_FADING_PATTERN_LED
     }
     else if (_ledState==LED_FADE_OUT)
     {
@@ -185,13 +185,16 @@ void FadingPatternLed::UpdateDisplay (unsigned long currTime)
       {//FADE_OUT->OFF
         _ledState=LED_OFF;
         _prevTime=currTime;
-        analogWrite(_ledPin,0);
+        analogWrite(_ledPin,255);
+#ifdef _DEBUG_FADING_PATTERN_LED_
+      Serial.println("FADE_OUT -> OFF");
+#endif // _DEBUG_FADING_PATTERN_LED
       }
       else
       {//just update fade value
-        int fadeValue = _maxBright - (currTime-_prevTime)*_maxBright/_fadeOutTime;
+        int fadeValue = _maxBright + ((255-_maxBright)*(currTime-_prevTime)/_fadeOutTime);
         // if fadeOutTime has changed we may have gone above maxBright in negative delta.
-        fadeValue = max(fadeValue, 0);
+        fadeValue = min(fadeValue, 255);
         analogWrite(_ledPin,fadeValue);
       }
     }
